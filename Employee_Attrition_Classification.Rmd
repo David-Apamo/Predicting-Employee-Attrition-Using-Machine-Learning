@@ -1,0 +1,886 @@
+---
+title: "Predicting Employee Attrition Using Machine Learning"
+author: "David"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+# Introduction
+
+Employee attrition, commonly referred to as employee turnover, is the process through which 
+employees leave an organization. Employee attrition can be due to many reasons, but the major 
+causes include poor management, lack of career development opportunities, inadequate 
+compensation relative to peer industries, work and life imbalances or limited recognition  (Keserer, 2024). Employee attrition can have profound impacts on businesses or organizations in several ways 
+e.g. losing top performers can create talent shortages that ripple through the organization, leading 
+to disruptions in essential functions and increased recruitment costs. Attrition also diminishes 
+productivity as experienced employees depart, often replaced by less skilled individuals who 
+require time to reach peak performance levels. Frequent turnover can strain relationships with 
+customers, suppliers and partners, thus damaging trust and potentially tarnishing the company's 
+reputation in the marketplace (Keserer, 2024 and Kurian, 2024). Understanding and predicting employee attrition is therefore critical for organizations aiming to maintain a stable and productive workforce.
+
+This analysis has the following two main objectives;
+
+ * To develop a reliable Machine Learning model that can accurately identify employees who are at 
+high risk of leaving the organization.
+ * To determine the most significant factors contributing to employee attrition.
+ 
+The dataset used in this analysis was obtained online from Kaggle.[Link](https://www.kaggle.com/datasets/pavansubhasht/ibm-hr-analytics-attrition-dataset)
+
+```{r}
+# Load packages
+suppressPackageStartupMessages(
+  {
+    library(tidyverse)
+    library(janitor)
+    library(caret)
+    library(mlr)
+    library(pROC)
+    library(yardstick)
+    library(vip)
+    library(corrplot)
+    library(parallel)
+    library(parallelMap)
+  }
+)
+```
+
+```{r}
+# Import data
+HR_Employee_Attrition <- read_csv("HR-Employee-Attrition.csv")
+```
+
+```{r}
+# View the structure of the data set
+HR_Employee_Attrition |> glimpse()
+```
+
+The data has 1,470 observations of 35 variables. Attrition, Business Travel, Department, Education Field, Gender, Job Role, Marital Status, Over 18 and Over Time are character variables, while the rest of the variables are numeric (double).
+
+```{r}
+# View the first few observations
+HR_Employee_Attrition |> head()
+```
+
+# Data Cleaning and Preprocessing
+
+The process of data cleaning will involve assessing for, and handling data quality issues such as missing values, white spaces, duplicated observations and inconsistent values. The character variables will also be converted to factors.
+
+```{r}
+# Clean variable names
+HR_Employee_Attrition <- clean_names(HR_Employee_Attrition)
+```
+
+```{r}
+# Check for missing values in each column
+map_dbl(HR_Employee_Attrition, ~sum(is.na(.)))
+```
+
+The data has no missing values.
+
+```{r}
+# Check for duplicated observations
+sum(duplicated(HR_Employee_Attrition))
+```
+
+There are no duplicated observations in the data.
+
+```{r}
+# Convert the character variables to factors
+
+# Specify columns to factor
+cols_to_factor <- c("business_travel", "department", "education_field", "gender", 
+                    "over18", "job_role", "marital_status", "over_time")
+# Convert the specified columns into factors
+HR_Employee_Attrition <- HR_Employee_Attrition |> 
+  mutate_at(.vars = cols_to_factor, .fun = factor)
+
+# Factor the variable Education Level (education)
+HR_Employee_Attrition$education <- factor(HR_Employee_Attrition$education, 
+                                          labels = c("Below College", "College", 
+                                                     "Degree", "Masters", "Doctor(PhD)"), 
+                                          levels = c(1,2,3,4,5))
+
+# Convert the target "attrition" into a binary variable
+HR_Employee_Attrition$attrition <- ifelse(HR_Employee_Attrition$attrition == "Yes", 1, 0)
+
+# Factor the target variable and change the levels to begin with the positive class
+HR_Employee_Attrition$attrition <- factor(HR_Employee_Attrition$attrition, 
+                                          levels = rev(c(0,1)),
+                                          labels = rev(c("No", "Yes")))
+
+```
+
+
+# Exploratory Data Analysis
+
+EDA is a crucial step before modeling because it helps uncover patterns, anomalies, and relationships in the data. This process will involve generating summary statistics for each column, and visualizing the data to help in understanding its main features, and uncover the underlying patterns.
+
+```{r}
+# Have a statistical summary of the data
+summary(HR_Employee_Attrition)
+```
+
+The mean age of employees was 36.92 years. 237 employees left the company while 1233 did not leave the company. Most of the employees rarely went for business travels. The average daily rate was 802.5 US dollars, while the average hourly rate was 65.89 US dollars. Most of the employees were from the department of Research and Development. The average monthly income and monthly rate were 6,503 and 14,313 US dollars respectively. Most of the employees were Sale Executives. Also, most employees did not work overtime. The mean percentage salary hike was 15.21%. Most of the employees had stock option levels 0 and 1.
+
+## Visualize the Data
+
+```{r}
+## Begin with Categorical Features
+
+# The Distribution of the target variable Attrition
+ggplot(HR_Employee_Attrition, aes(attrition, fill = attrition)) + 
+  geom_bar() + 
+  labs(title = "Attrition Status", 
+       x = "Attrition", y = "Frequency", 
+       fill = "Attrition") + 
+  theme_minimal()
+```
+
+Attrition was very unlikely among the employees. More than 1200 employees did not leave the company. Attrition was about 5 times less likely.
+
+```{r}
+# Attrition by Business Travel
+ggplot(HR_Employee_Attrition, aes(business_travel, fill = attrition)) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Business Travel", 
+       x = NULL, y = "Proportion", 
+       fill = "Attrition") + 
+  coord_flip() + theme_minimal()
+
+```
+
+Attrition rate was highest among employees who travel frequently (25%), followed by those who travel rarely (about 14%). The rate of attrition was least among employees who never went for business travels.
+
+```{r}
+# Attrition by Department
+ggplot(HR_Employee_Attrition, aes(department, fill = attrition)) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Department", 
+       x = NULL, y = "Proportion", 
+       fill = "Attrition") + 
+  coord_flip() + theme_minimal()
+
+```
+
+Attrition rate was highest in the Sales department closely followed by HR.
+
+```{r}
+# Attrition by Education Level
+ggplot(HR_Employee_Attrition, aes(education, fill = attrition)) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Education Level", 
+       x = NULL, y = "Proportion", 
+       fill = "Attrition") + 
+  coord_flip() + theme_minimal()
+
+```
+
+Attrition was highest among those who had basic education (below college), closely followed by those who had bachelor's degrees, then college graduates and Master's holders respectively.
+
+```{r}
+# Attrition by Education Field
+ggplot(HR_Employee_Attrition, aes(education_field, fill = attrition)) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Education Field", 
+       x = NULL, y = "Proportion", 
+       fill = "Attrition") + 
+  coord_flip() + theme_minimal()
+```
+
+Attrition rate was highest among employees within HR education field (about 26%), followed by Technical Degree field (about 23%) and Marketing (about 22%) respectively. Medical field and "Other" nearly had the same rates of attrition.
+
+```{r}
+# Attrition by Gender
+ggplot(HR_Employee_Attrition, aes(gender, fill = attrition)) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Gender", 
+       x = NULL, y = "Proportion", 
+       fill = "Attrition") + 
+  coord_flip() + theme_minimal()
+```
+
+Male employees had a slightly higher rate of attrition than female employees.
+
+```{r}
+# Attrition by Job level
+ggplot(HR_Employee_Attrition, aes(job_level, fill = attrition)) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Job Level", 
+       x = NULL, y = "Proportion", 
+       fill = "Attrition") + 
+  coord_flip() + theme_minimal()
+```
+
+Attrition was highest among employees with job level 1 (about 27%), followed by job level 3 (about 15%).
+
+```{r}
+# Attrition by Job Role
+ggplot(HR_Employee_Attrition, aes(job_role, fill = attrition)) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Job Role", 
+       x = NULL, y = "Proportion", 
+       fill = "Attrition") + 
+  coord_flip() + theme_minimal()
+```
+
+Attrition rate was highest among Sales Representatives (about 40%), followed by lab technicians (about 23%) and HR (23%) respectively.
+
+```{r}
+# Attrition by Marital Status
+ggplot(HR_Employee_Attrition, aes(marital_status, fill = attrition)) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Marital Status", 
+       x = NULL, y = "Proportion", 
+       fill = "Attrition") + 
+  coord_flip() + theme_minimal()
+```
+
+Attrition rate was highest among single employees (about 26%).
+
+```{r}
+# Attrition by Overtime
+ggplot(HR_Employee_Attrition, aes(over_time, fill = attrition)) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Overtime", 
+       x = NULL, y = "Proportion", 
+       fill = "Attrition") + 
+  coord_flip() + theme_minimal()
+```
+
+Attrition was highest among the employees who worked overtime (about 30%).
+
+```{r}
+# Attrition by Stock Option Level
+ggplot(HR_Employee_Attrition, aes(stock_option_level, fill = attrition)) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Stock Option Level", 
+       x = NULL, y = "Proportion", 
+       fill = "Attrition") + 
+  coord_flip() + theme_minimal()
+```
+
+Attrition was highest among employees who had stock option level 0 (about 24%), followed by employees with stock option level 3 (about 17%).
+
+```{r}
+## Visualize the distribution of the numeric Features in a single plot
+
+# This will need the numeric features data to be converted into long format
+
+# Select the numeric features plus the response var and convert them to long format
+Num_Untidy <- HR_Employee_Attrition |> 
+  select(age, daily_rate, home_distance = distance_from_home, hourly_rate, 
+         monthly_income, monthly_rate, companies_worked = num_companies_worked, 
+         percent_salary_hike, years_at_company, 
+         current_role_years = years_in_current_role, 
+         last_promo_years = years_since_last_promotion, 
+         curr_manager_years = years_with_curr_manager, attrition) |> 
+  gather(key = "Variable", value = "Value", -attrition)
+```
+
+```{r}
+# Create box plots for the numeric features characterized by Attrition
+ggplot(Num_Untidy, aes(attrition, as.numeric(Value), colour = attrition)) + 
+  facet_wrap(~Variable, scales = "free_y") +
+  geom_boxplot() + 
+  labs(title = "Boxplots of Numeric Features", 
+       y = "Value") + 
+  theme_bw()
+```
+
+On average;
+
+* Young employees were more likely to leave their jobs for other companies as compared to older employees. Among the employees who left the company, two were much older than the others. 
+* Attrition rate was high among employees who have worked for more companies, and also among those who have less years at current role.
+* Attrition rate was slightly higher among employees who receive lower daily rates.
+* Attrition rate was also higher among employees who travel for long distances from home to work.
+* Attrition rates were higher among employees who haven't received promotion for the last few years, employees who have been at the company for a few years, employees who have been with their current managers for a few years and employees who get less monthly income.
+* Employees who received little percentage of salary hike were also more likely to leave the company.
+* Attrition was about 50/50 for Hourly rate and monthly rate.
+
+```{r}
+# Plot histograms of the numeric features
+ggplot(Num_Untidy, aes(as.numeric(Value))) + 
+  facet_wrap(~Variable, scales = "free") +
+  geom_histogram() + theme_bw()
+```
+
+Age nearly follows a normal distribution, while number of companies worked at, years in current role, years since last promotion, years with current manager, monthly income, percentage salary hike and years at company are all right-skewed. Daily rate, hourly rate and monthly rate seem to be multi-modal.
+
+```{r}
+# Job and work-related features
+JobWork_Untidy <- HR_Employee_Attrition |> 
+  select(environment_satisfaction, job_involvement, job_satisfaction, 
+         performance_rating, relationship_satisfaction, work_life_balance, 
+         attrition) |> 
+  gather(key = "Variable", value = "Value", -attrition)
+```
+
+```{r}
+# Create bar plots for the Job & Work related features
+ggplot(JobWork_Untidy, aes(Value, fill = attrition)) + 
+  facet_wrap(~Variable, scales = "free") + 
+  geom_bar(position = "fill") + theme_bw()
+```
+
+Attrition rates were highest among employees who were least satisfied by their job, work environment, work-life balance & relationship at work, and also among employees who had the least job involvement. Attrition rates were nearly the same for Performance ratings 3 and 4.
+
+## Correlation Analysis
+
+```{r}
+## Check the correlations between numeric features
+Num <- HR_Employee_Attrition |> select(where(~is.numeric(.)))
+corrplot(cor(Num |> select(-employee_count, -employee_number, -standard_hours)))
+```
+
+There are strong positive correlations between job level & monthly income, percentage salary hike & performance rating, monthly income and total working years, years in current role & years at the company, and years in current role and years with the current manager. There are also moderate positive correlations between age & job level, age & total years of work and years at the company & total years of work.
+
+# Feature Engineering
+
+These is a step that precedes model training. It involves preparing the data for Machine Learning models by scaling numeric features and encoding categorical predictors. Feature encoding is important because some algorithms like KNN, SVM and XGBoost cannot handle categorical predictors. Scaling of numeric predictors is also important because some algorithms are sensitive to the magnitude of feature values, and large values tend to dominate various computations, leading to biased parameter estimates or inefficient optimization. I'll begin by partitioning the data into training and test sets, then prepare the two sets separately to prevent information leakage. I will then use the training set to train my models with cross-validation, and validate the models on the independent test set.
+
+```{r}
+# First drop features which don't contain much information with regards to attrition 
+# (e.g employee count, employee number, over 18 and standard hrs)
+data <- HR_Employee_Attrition |> 
+  select(-employee_count, -employee_number, -standard_hours, -over18)
+```
+
+```{r}
+# Partition the data into training and validation sets
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data (use 80/20 split)
+train_index <- createDataPartition(data$attrition, p = 0.80, list = FALSE)
+# Assign 80% to training set
+training_data <- data[train_index, ]
+# Assign the remaining 20% to test set
+test_data <- data[-train_index, ]
+```
+
+The training set contains 1,177 observations while test set contains 293 observations.
+
+```{r}
+## Prepare training data
+
+## Scale the numeric features in training data
+training_scaled <- training_data |> mutate_if(is.numeric, ~ as.vector(scale(.)))
+
+## Label-encode the categorical features
+
+# Encode business_travel
+training_scaled[["business_travel"]] <- factor(training_scaled[["business_travel"]],
+                                    labels = c(1,2,3), 
+                                    levels = c("Non-Travel","Travel_Frequently", 
+                                               "Travel_Rarely"))
+
+# Encode department
+training_scaled[["department"]] <- factor(training_scaled[["department"]], 
+                                        labels = c(1,2,3), 
+                                        levels = c("Human Resources", 
+                                                   "Research & Development",
+                                                   "Sales"))
+
+# Encode education field
+training_scaled[["education_field"]] <- factor(training_scaled[["education_field"]], 
+                                             labels = c(1,2,3,4,5,6), 
+                                             levels = c("Human Resources", 
+                                                        "Life Sciences", 
+                                                        "Marketing", "Medical", 
+                                                        "Other",
+                                                        "Technical Degree"))
+
+# Encode gender into a binary variable (male = 1, female = 0)
+training_scaled$gender <- ifelse(training_scaled$gender == "Male", 1, 0)
+
+# Encode job_role
+training_scaled[["job_role"]] <- factor(training_scaled[["job_role"]], 
+                                      labels = c(1,2,3,4,5,6,7,8,9), 
+                                      levels = c("Healthcare Representative", 
+                                                 "Human Resources",
+                                                 "Laboratory Technician", 
+                                                 "Manager",
+                                                 "Manufacturing Director", 
+                                                 "Research Director",
+                                                 "Research Scientist", 
+                                                 "Sales Executive",
+                                                 "Sales Representative"))
+
+# Encode marital status
+training_scaled[["marital_status"]] <- factor(training_scaled[["marital_status"]], 
+                                            labels = c(1,2,3), 
+                                            levels = c("Divorced", "Married", 
+                                                       "Single"))
+
+# Encode overtime
+training_scaled$over_time <- ifelse(training_scaled$over_time == "Yes", 1, 0)
+
+# Convert the encoded factor variables to numeric type
+predictors <- training_scaled |> dplyr::select(-attrition) |> 
+  mutate_if(is.factor, ~ as.numeric(.))
+
+# Add a column with the target variable
+training_set <- predictors |> mutate(attrition = training_data$attrition)
+```
+
+```{r}
+## Prepare test data
+
+# Scale the numeric features in test data
+test_scaled <- test_data |> mutate_if(is.numeric, ~ as.vector(scale(.)))
+
+# Label encode the categorical features
+
+# Encode business_travel
+test_scaled[["business_travel"]] <- factor(test_scaled[["business_travel"]],
+                                    labels = c(1,2,3), 
+                                    levels = c("Non-Travel", "Travel_Frequently", 
+                                               "Travel_Rarely"))
+
+# Encode department
+test_scaled[["department"]] <- factor(test_scaled[["department"]], 
+                                        labels = c(1,2,3), 
+                                        levels = c("Human Resources", 
+                                                   "Research & Development",
+                                                   "Sales"))
+
+# Encode education field
+test_scaled[["education_field"]] <- factor(test_scaled[["education_field"]], 
+                                             labels = c(1,2,3,4,5,6), 
+                                             levels = c("Human Resources", 
+                                                        "Life Sciences",
+                                                        "Marketing", 
+                                                        "Medical", "Other",
+                                                        "Technical Degree"))
+
+# Encode gender into a binary variable (male = 1, female = 0)
+test_scaled$gender <- ifelse(test_scaled$gender == "Male", 1, 0)
+
+# Encode job_role
+test_scaled[["job_role"]] <- factor(test_scaled[["job_role"]], 
+                                      labels = c(1,2,3,4,5,6,7,8,9), 
+                                      levels = c("Healthcare Representative", 
+                                                 "Human Resources",
+                                                 "Laboratory Technician", 
+                                                 "Manager",
+                                                 "Manufacturing Director", 
+                                                 "Research Director",
+                                                 "Research Scientist", 
+                                                 "Sales Executive",
+                                                 "Sales Representative"))
+
+# Encode marital status
+test_scaled[["marital_status"]] <- factor(test_scaled[["marital_status"]], 
+                                            labels = c(1,2,3), 
+                                            levels = c("Divorced", "Married", 
+                                                       "Single"))
+
+# Encode overtime into a binary variable
+test_scaled$over_time <- ifelse(test_scaled$over_time == "Yes", 1, 0)
+
+# Convert the encoded factor variables to numeric type
+predictors <- test_scaled |> select(-attrition) |> 
+  mutate_if(is.factor, ~ as.numeric(.))
+
+# Add a column with the target variable
+test_set <- predictors |> mutate(attrition = test_data$attrition)
+```
+
+
+## Feature Selection
+
+Logistic Regression model will be used to perform stepwise feature selection.
+
+```{r}
+# Fit a logistic Regression model
+model <- glm(attrition ~., family = binomial(logit), data = training_set)
+# Have a model summary to check for the predictors which are significant
+summary(model)
+```
+
+The significant predictors are age, department, home distance, environmental satisfaction, job involvement, job satisfaction, marital status, number of companies worked for, working overtime, relationship satisfaction, work-life balance, years at the company, years in current role, years since last promotion and years with the current manager (p < .05).
+
+```{r}
+# Perform stepwise regression for feature selection
+stepwise_model <- step(model)
+summary(stepwise_model)
+```
+
+The predictors selected by the stepwise regression model are age, department, distance_from_home, environment_satisfaction, gender, job_involvement, job_level, job_satisfaction, marital_status,  number_of_companies_worked_at, over_time, percent_salary_hike, relationship_satisfaction, stock_option_level, training_times_last_year, work_life_balance, years_at_company, years_in_current_role, years_since_last_promotion, and years_with_current_manager.
+
+I'll only use the selected features to train the models.
+
+```{r}
+# Perform feature selection based on stepwise regression results
+training_set <- training_set |> select(age, department, distance_from_home, 
+                            environment_satisfaction, gender, job_involvement, 
+                            job_level, job_satisfaction, marital_status,  
+                            num_companies_worked, over_time, percent_salary_hike, 
+                            relationship_satisfaction, stock_option_level, 
+                            training_times_last_year, work_life_balance, 
+                            years_at_company, years_in_current_role, 
+                            years_since_last_promotion, years_with_curr_manager, 
+                            attrition)
+
+test_set <- test_set |> select(age, department, distance_from_home, 
+                            environment_satisfaction, gender, job_involvement, 
+                            job_level, job_satisfaction, marital_status,  
+                            num_companies_worked, over_time, percent_salary_hike, 
+                            relationship_satisfaction, stock_option_level, 
+                            training_times_last_year, work_life_balance, 
+                            years_at_company, years_in_current_role, 
+                            years_since_last_promotion, years_with_curr_manager, 
+                            attrition)
+
+```
+
+
+# Model Training
+
+I'll try four different algorithms i.e. Logistic Regression, Random Forest, SVM and XGBoost. When training the models, I'll perform hyperparameter tuning with cross-validation in order to obtain optimal solutions. Cross-validation helps to evaluate how the models would generalize on new data, and also helps to reduce overfitting. When performing cross-validation, I'll use same seed number for each cross-validation process to ensure that the model results can directly be compared.
+
+```{r}
+# Define classification task
+AttritionTask <- makeClassifTask(data = training_set, target = "attrition")
+```
+
+# Logistic Regression model
+
+```{r}
+# Define learner
+logReg <- makeLearner("classif.logreg", predict.type = "prob")
+```
+
+```{r}
+# Train the model
+logRegModel <- train(logReg, AttritionTask)
+```
+
+```{r}
+# Cross-validate the model training process
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Define a 6-fold resampling description with 50 iterations
+kFold <- makeResampleDesc(method = "RepCV", folds = 6, 
+                          reps = 40, stratify = TRUE)
+
+# Cross-validate
+logRegCV <- resample(learner = logReg, task = AttritionTask, 
+                     resampling = kFold, 
+                     measures = list(mmce, acc, fpr, fnr), 
+                     show.info = FALSE)
+
+# View cross_validation results
+logRegCV$aggr
+```
+
+The Logistic Regression model generalizes well. It has an accuracy of 86.61% and a False Positive Rate of 3.24%. However, FNR is very high (66.11%).
+
+
+# Random Forest
+
+```{r}
+# Define learner
+rf_learner <- makeLearner("classif.randomForest", predict.type = "prob")
+```
+
+```{r}
+# Define hyperparameter space for tuning
+rf_ParamSpace <- makeParamSet(makeIntegerParam("ntree", lower = 300, 
+                                                  upper = 500),
+                                 makeIntegerParam("mtry", lower = 5, 
+                                                  upper = 15), 
+                                 makeIntegerParam("nodesize", lower = 2, 
+                                                  upper = 7),
+                                 makeIntegerParam("maxnodes", lower = 10, 
+                                                  upper = 50))
+```
+
+```{r}
+# Define search strategy to use random search with 200 iterations
+randSearch <- makeTuneControlRandom(maxit = 200)
+
+# Define a 6-fold resampling description
+cvForTuning <- makeResampleDesc("CV", iters = 6, stratify = TRUE)
+```
+
+I'll use parallelization to speed up the process because a large number of hyperparameter combinations will be tried.
+
+```{r}
+# Begin parallelization
+parallelStartSocket(cpus = detectCores())
+
+# Set random seed for reproducibility
+set.seed(123)
+
+# Perform hyperparameter tuning
+tuned_rf_Pars <- tuneParams(learner = rf_learner, task = AttritionTask, 
+                            resampling = cvForTuning, 
+                            par.set = rf_ParamSpace, 
+                            control = randSearch, 
+                            measures = list(mmce, acc, fpr, fnr), 
+                            show.info = FALSE)
+
+# Stop parallelization
+parallelStop()
+```
+
+```{r}
+# View cross-validation results
+tuned_rf_Pars
+```
+
+The RF classifier has a training accuracy of 85.72% which is good. However, this model has a very high FNR (81.6%) which is worse. The optimal hyperparameters with the least MMCE value are `ntree = 464`, `mtry = 9`, `nodesize = 6` and `maxnodes = 48`.
+
+```{r}
+# Set the optimal hyperparameters for the final model
+tuned_rf <- setHyperPars(rf_learner, par.vals = tuned_rf_Pars$x)
+
+# Train the final model using the optimal hyperparameters
+tuned_rf_Model <- train(tuned_rf, AttritionTask)
+
+```
+
+```{r}
+# Check if there are enough trees in the Random Forest model
+
+# First extract model information
+rfModelData <- getLearnerModel(tuned_rf_Model)
+
+# Plot MMCE vs number of trees
+plot(rfModelData)
+```
+
+The mean out-of-bag error stabilizes too early, implying that there are enough trees in the Forest. The Negative class has a very high mean out-of-bag error rate which doesn't look good.
+
+# SVM model
+
+```{r}
+# Define learner
+svmLearner <- makeLearner("classif.svm", predict.type = "prob")
+```
+
+```{r}
+# Define hyperparameter space for tuning the model
+kernels <- c("polynomial", "radial")
+svmParamSpace <- makeParamSet(makeDiscreteParam("kernel", values = kernels), 
+                              makeIntegerParam("degree", lower = 1, upper = 5), 
+                              makeNumericParam("cost", lower = 0.1, upper = 12), 
+                              makeNumericParam("gamma", lower = 0.05, 5))
+```
+
+```{r}
+# Define search strategy to use random search with 200 iterations
+# (SVM is computationally expensive)
+randSearch <- makeTuneControlRandom(maxit = 200)
+
+# Define CV strategy
+cvForTuning <- makeResampleDesc("CV", iters = 6, stratify = TRUE)
+```
+
+```{r}
+# set random seed for reproducibility
+set.seed(123)
+
+# Begin parallelization
+parallelStartSocket(cpus = detectCores())
+
+# Perform hyperparameter tuning with cross-validation
+tunedSvmPars <- tuneParams(learner =  svmLearner, task = AttritionTask, 
+                           resampling = cvForTuning, 
+                           par.set = svmParamSpace, 
+                           control = randSearch,
+                           measures = list(mmce, acc, fpr, fnr), 
+                           show.info = FALSE)
+
+# Stop parallelization
+parallelStop()
+```
+
+```{r}
+# View tuning results
+tunedSvmPars
+```
+
+The SVM model performs better than the Random Forest & Logistic Regression models (has an accuracy of 86.83%), even though it also has a high FNR too (FNR = 74.76%). The optimal hyperparameters are a polynomial kernel with a degree of 1, cost value of 1.1 and a gamma value of 4.67.
+
+```{r}
+# Use the optimal hyperparameters to train the final model
+
+# Set the optimal hyperparameters for the final model
+tunedSvm <- setHyperPars(learner =  svmLearner, par.vals = tunedSvmPars$x)
+
+# Train the final model
+tunedSvmModel <- train(tunedSvm, AttritionTask)
+```
+
+
+# XGBoost
+
+```{r}
+# Define learner
+XGB <- makeLearner("classif.xgboost", predict.type = "prob")
+```
+
+```{r}
+# Define hyperparameter space for tuning the model
+xgbParamSpace <- makeParamSet(
+makeNumericParam("eta", lower = 0.01, upper = 0.8),
+makeNumericParam("gamma", lower = 0.001, upper = 7),
+makeIntegerParam("max_depth", lower = 1, upper = 10),
+makeNumericParam("min_child_weight", lower = 1, upper = 10),
+makeNumericParam("subsample", lower = 0.5, upper = 1),
+makeNumericParam("colsample_bytree", lower = 0.5, upper = 1),
+makeIntegerParam("nrounds", lower = 20, upper = 300))
+```
+
+```{r}
+# Define search strategy to use random search
+randSearch <- makeTuneControlRandom(maxit = 500)
+
+# Make resampling description for CV
+cvForTuning <- makeResampleDesc("CV", iters = 6, stratify = TRUE)
+
+# Set random seed for reproducibility
+set.seed(123)
+
+# Tune the model with cross-validation
+tunedXgbPars <- tuneParams(learner = XGB, task = AttritionTask, 
+                           resampling = cvForTuning, 
+                           par.set = xgbParamSpace, 
+                           control = randSearch,
+                           measures = list(mmce, acc, fpr, fnr), 
+                           show.info = FALSE)
+
+```
+
+```{r}
+# Check performance
+tunedXgbPars$y
+```
+
+XGBoost classifier has a training accuracy (87.85%) higher than the Logistic Regression, RF and SVM classifiers. However, it also has a high FNR (60.04%), though a bit lower than those by the previous models.
+
+```{r}
+# Train the final model using optimal hyperparameters
+
+# Set the optimal hyperparameters for the final model
+tunedXgb <- setHyperPars(XGB, par.vals = tunedXgbPars$x)
+
+# Train the final model
+tunedXgbModel <- train(tunedXgb, AttritionTask)
+```
+
+```{r}
+# Check if there are enough trees for the model
+
+# Extract model information
+xgbModelData <- getLearnerModel(tunedXgbModel)
+
+# Plot
+ggplot(xgbModelData$evaluation_log, aes(iter, train_logloss)) + 
+  geom_line() + geom_point()
+```
+
+The training log loss stabilizes after about 100th iteration. This implies that I used enough trees.
+
+
+# Model Validation
+
+I'll use the best two performing models (SVM and XGBoost) to make predictions on test data, and evaluate how they perform on unseen data. I'll use the caret's `confusionMatrix()` function to create a confusion matrix table, from which various evaluation metrics (like Accuracy, Sensitivity, Precision, Specificity) are calculated.
+
+```{r}
+# Use the SVM model to make predictions on test data
+SvmPreds <- predict(tunedSvmModel, newdata = test_set)
+
+# Collect prediction
+SvmPreds_data <- SvmPreds$data
+```
+
+```{r}
+# Generate a confusion matrix
+confusionMatrix(table(SvmPreds_data$response, SvmPreds_data$truth), positive = "Yes")
+```
+
+SVM classifier has a validation accuracy of 88.05%, which is good. However the SVM model has a poor sensitivity for the positive class (34.04%), but the model's precision is good. When this model predicts a positive case, it is correct 80% of the time, and when it predicts a negative case, it is correct 88.64% of the time.
+
+```{r}
+# Calculate ROC AUC
+SvmPreds_data |> roc_auc(truth = truth, prob.Yes)
+```
+
+SVM has a ROC_AUC value 0.79, which isn't bad. 
+
+```{r}
+# Plot ROC curve
+SvmPreds_data |> roc_curve(truth = truth, prob.Yes) |> autoplot()
+```
+
+
+**Note:** Unfortunately, the `vip()` and `varImp()` functions don't have an implementation of feature importance for SVM model.
+
+```{r}
+# Use the XGBoost model to make predictions on test data
+xgbPreds <- predict(tunedXgbModel, newdata = test_set)
+
+# Collect prediction
+xgbPreds_data <- xgbPreds$data
+```
+
+```{r}
+# Calculate confusion matrix
+confusionMatrix(table(xgbPreds_data$response, xgbPreds_data$truth), positive = "Yes")
+```
+
+XGBoost classifier has a validation accuracy of 87.37%. It has a better Sensitivity than SVM, but a much lower Precision (65.62%).
+
+```{r}
+# Calculate ROC AUC
+xgbPreds_data |> roc_auc(truth = truth, prob.Yes)
+```
+
+XGBoost has the highest ROC AUC value (0.83).
+
+```{r}
+# Plot ROC curve
+xgbPreds_data |> roc_curve(truth = truth, prob.Yes) |> autoplot()
+```
+
+ROC curve for the XGBoost classifier looks good. XGBoost is better at distinguishing between the two classes than SVM.
+
+```{r}
+# Create the variable importance plot
+vip(tunedXgbModel) + 
+  labs(title = "Variable Importance plot", 
+       y = "Importance Score") + 
+  theme_minimal()
+```
+
+According to the XGBoost model, the most important predictors of attrition are overtime, age, job level, distance from home, stock option level, job satisfaction, years at the current company, work-life balance, environment satisfaction and department.
+
+## Conclusion
+
+I'll pick the SVM model because it has a higher accuracy (88.05%), and a better precision for the positive class (80%).
+
+## Limitations of this Analysis
+
+ * The issue of class imbalance was not handled, leading to lower sensitivity by the model.
+ * Only the random search strategy was used during hyperparameter tuning, which might not have given the optimal hyperparameter combinations. The model can therefore still be improved upon.
+ 
+## Recommendations
+
+ * The high class imbalance should be handled using SMOTE technique, or using cost-sensitive classifiers.
+ * SHAP analysis should be conducted to help in understanding how individual features contribute to the predicted probabilities of attrition.
+ * What-if analysis should also be done using the `counterfactuals package` to determine the changes in individual features that can lead to a reduction in the probability (likelihood) of attrition. This can help in formulating potential retention strategies.
+
+## References
+
+Keserer, E. (2024, January 8). Predicting Employee Attrition Using Machine Learning.
+
+Kurian, L. (2024, December 12). The hidden impact of attrition on workplace productivity. Plum. https://www.plumhq.com/blog/impact-of-attrition-on-productivity
+
+Rhys, H. I. (2020). Machine learning with R, the tidyverse, and mlr. Manning Publications. https://livebook.manning.com/book/machine-learning-with-r-the-tidyverse-and-mlr/about-this-book.
+
