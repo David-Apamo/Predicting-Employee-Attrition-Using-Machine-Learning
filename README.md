@@ -13,19 +13,19 @@ The dataset used for this analysis is publicly available on Kaggle. [Link](https
 ## Methodology Overview
 The workflow includes:
 
-**Data Preprocessing** – Handling missing values & duplicated observations, encoding categorical features, and scaling numerical features.
+**1. Data Preprocessing** – Handling missing values & duplicated observations, encoding categorical features, and scaling numerical features.
 
-**Exploratory Data Analysis (EDA)** – Generating summary statistics and visualizing trends and patterns associated with attrition.
+**2. Exploratory Data Analysis (EDA)** – Generating summary statistics and visualizing trends and patterns associated with attrition.
 
-**Model Building** – Training various Machine Learning models (e.g., Logistic Regression, Random Forest, SVM, XGBoost) to classify attrition.
+**3. Model Building** – Training various Machine Learning models (e.g., Logistic Regression, Random Forest, SVM, XGBoost) to classify attrition.
 
-**Model Evaluation** – Using performance metrics like accuracy, precision, recall, F1-score, and AUC-ROC to select the best model.
+**4. Model Evaluation** – Using performance metrics like accuracy, precision, recall, F1-score, and AUC-ROC to select the best model.
 
-**Feature Importance Analysis** – Determining which features most influence attrition predictions.
+**5. Feature Importance Analysis** – Determining which features most influence attrition predictions.
 
 ## Results
 
-XGBoost algorithm performed best with a validation accuracy of 89.76%, Precision of 81.48%, and a ROC AUC value of 0.83. When this model predicts a positive case, it is correct 81.48% of the time, and when it predicts a negative case, it is correct 90.6% of the time.
+SVM algorithm performed best with a validation accuracy of 88.05%, Precision of 80%, and a ROC AUC value of 0.80. When this model predicts a positive case, it is correct 80% of the time, and when it predicts a negative case, it is correct 88.64% of the time.
 
 ## Technologies Used
 Rstudio software (Packages: tidyverse, janitor, caret, mlr, pROC, yardstick, vip, corrplot, parallel, parallelMap).
