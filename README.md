@@ -12,6 +12,7 @@ The dataset used for this analysis is publicly available on Kaggle. [Link](https
 
 ## Methodology Overview
 The workflow includes:
+
 **1. Data Preprocessing** – Handling missing values & duplicated observations, encoding categorical features, and scaling numerical features.
 
 **2. Exploratory Data Analysis (EDA)** – Generating summary statistics and visualizing trends and patterns associated with attrition.
